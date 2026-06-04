@@ -7,76 +7,120 @@ const client = new BedrockRuntimeClient({
   region: process.env.BEDROCK_REGION || 'us-east-2',
 });
 
-interface PredictionRequest {
-  driver: string;
-  circuit: string;
-  tyres: string;
-  weather: string;
-  downforce: string;
-  strategy: string;
-}
-
 export const handler = async (event: any) => {
   try {
-    const body: PredictionRequest = JSON.parse(event.body);
+    const body = JSON.parse(event.body);
+    const path = event.resource || event.path || '';
 
-    // Fetch race data from Ergast API
-    const raceData = await fetchRaceData(body.circuit);
-    const driverData = await fetchDriverData(body.driver);
+    if (body.type === 'overview') {
+      return await handleOverview(body);
+    } else {
+      return await handlePrediction(body);
+    }
 
-    // Build AI prompt
-    const prompt = buildPrompt(body, raceData, driverData);
-
-    // Call Bedrock
-    const prediction = await callBedrock(prompt);
-
-    return {
-      statusCode: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
-      body: JSON.stringify(prediction),
-    };
   } catch (error: any) {
-    console.error('Prediction error:', error);
-    return {
-      statusCode: 500,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      },
-      body: JSON.stringify({ error: error.message }),
-    };
+    console.error('Error:', error);
+    return response(500, { error: error.message });
   }
 };
 
-async function fetchRaceData(circuit: string): Promise<any> {
-  const res = await fetch(
-    `https://api.jolpi.ca/ergast/f1/current.json`
-  );
-  const data = await res.json();
-  return data.MRData.RaceTable.Races;
+// ===== OVERVIEW — Top contenders for next race =====
+async function handleOverview(body: any) {
+  const standings = await fetchDriverStandings();
+  const races = await fetchRaceCalendar();
+
+  const nextRace = findNextRace(races);
+  const prompt = buildOverviewPrompt(standings, nextRace, body.circuit || nextRace?.raceName || 'next race');
+
+  const result = await callBedrock(prompt);
+
+  return response(200, {
+    race: nextRace,
+    prediction: result,
+  });
 }
 
-async function fetchDriverData(driver: string): Promise<any> {
-  const res = await fetch(
-    `https://api.jolpi.ca/ergast/f1/current/driverStandings.json`
-  );
+// ===== PREDICTION — Single driver what-if =====
+async function handlePrediction(body: any) {
+  const raceData = await fetchRaceCalendar();
+  const driverData = await fetchDriverStandings();
+
+  const prompt = buildPredictionPrompt(body, raceData, driverData);
+  const prediction = await callBedrock(prompt);
+
+  return response(200, prediction);
+}
+
+// ===== DATA FETCHERS =====
+async function fetchDriverStandings(): Promise<any[]> {
+  const res = await fetch('https://api.jolpi.ca/ergast/f1/current/driverStandings.json');
   const data = await res.json();
   return data.MRData.StandingsTable.StandingsLists[0]?.DriverStandings || [];
 }
 
-function buildPrompt(
-  request: PredictionRequest,
-  races: any[],
-  standings: any[]
-): string {
+async function fetchRaceCalendar(): Promise<any[]> {
+  const res = await fetch('https://api.jolpi.ca/ergast/f1/current.json');
+  const data = await res.json();
+  return data.MRData.RaceTable.Races || [];
+}
+
+function findNextRace(races: any[]): any {
+  const now = new Date();
+  const upcoming = races.find((r: any) => new Date(r.date) > now);
+  return upcoming || races[races.length - 1];
+}
+
+// ===== PROMPT BUILDERS =====
+function buildOverviewPrompt(standings: any[], nextRace: any, circuit: string): string {
   const standingsText = standings
     .slice(0, 10)
-    .map(
-      (s: any) =>
-        `P${s.position}: ${s.Driver.givenName} ${s.Driver.familyName} (${s.Constructors[0].name}) - ${s.points} pts, ${s.wins} wins`
+    .map((s: any) =>
+      `P${s.position}: ${s.Driver.givenName} ${s.Driver.familyName} (${s.Constructors[0].name}) - ${s.points} pts, ${s.wins} wins`
+    )
+    .join('\n');
+
+  const raceName = nextRace?.raceName || circuit;
+  const circuitName = nextRace?.Circuit?.circuitName || circuit;
+
+  return `You are an F1 race prediction AI analyst. Predict the top 5 finishers for the upcoming race.
+
+CURRENT 2026 SEASON STANDINGS:
+${standingsText}
+
+UPCOMING RACE: ${raceName}
+CIRCUIT: ${circuitName}
+
+Based on current form, historical performance at this circuit, and team strength, predict the top 5 finishers.
+
+Respond ONLY in this JSON format, no other text:
+{
+  "contenders": [
+    {
+      "position": 1,
+      "driver": "<full name>",
+      "team": "<team name>",
+      "winChance": <number 0-100>,
+      "form": "<HOT|GOOD|AVERAGE|COLD>",
+      "reason": "<one sentence why>"
+    }
+  ],
+  "safetyCarChance": <number 0-100>,
+  "rainChance": <number 0-100>,
+  "darkHorse": {
+    "driver": "<surprise pick full name>",
+    "team": "<team>",
+    "reason": "<why they could surprise>"
+  },
+  "keyBattle": "<one sentence about the most exciting battle to watch>",
+  "circuitInsight": "<one sentence about what makes this circuit special>"
+}`;
+}
+
+function buildPredictionPrompt(request: any, races: any[], standings: any[]): string {
+  const standingsText = standings
+    .slice(0, 10)
+    .map((s: any) =>
+      `P${s.position}: ${s.Driver.givenName} ${s.Driver.familyName} (${s.Constructors[0].name}) - ${s.points} pts, ${s.wins} wins`
     )
     .join('\n');
 
@@ -112,8 +156,9 @@ Respond ONLY in this JSON format, no other text:
 }`;
 }
 
+// ===== BEDROCK =====
 async function callBedrock(prompt: string): Promise<any> {
-  const modelId = process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-haiku-20240307-v1:0';
+  const modelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 
   const command = new InvokeModelCommand({
     modelId,
@@ -121,25 +166,28 @@ async function callBedrock(prompt: string): Promise<any> {
     accept: 'application/json',
     body: JSON.stringify({
       anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: 500,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
+      max_tokens: 800,
+      messages: [{ role: 'user', content: prompt }],
     }),
   });
 
-  const response = await client.send(command);
-  const responseBody = JSON.parse(new TextDecoder().decode(response.body));
+  const res = await client.send(command);
+  const responseBody = JSON.parse(new TextDecoder().decode(res.body));
   const text = responseBody.content[0].text;
 
-  // Parse JSON from response
   const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    return JSON.parse(jsonMatch[0]);
-  }
-
+  if (jsonMatch) return JSON.parse(jsonMatch[0]);
   throw new Error('Failed to parse AI response');
+}
+
+// ===== HELPERS =====
+function response(statusCode: number, body: any) {
+  return {
+    statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    },
+    body: JSON.stringify(body),
+  };
 }
