@@ -25,7 +25,7 @@ export const handler = async (event: any) => {
 };
 
 // ===== OVERVIEW — Top contenders for next race =====
-async function handleOverview(body: any) {
+export async function handleOverview(body: any) {
   const standings = await fetchDriverStandings();
   const races = await fetchRaceCalendar();
 
@@ -41,7 +41,7 @@ async function handleOverview(body: any) {
 }
 
 // ===== PREDICTION — Single driver what-if =====
-async function handlePrediction(body: any) {
+export async function handlePrediction(body: any) {
   const raceData = await fetchRaceCalendar();
   const driverData = await fetchDriverStandings();
 
@@ -52,26 +52,26 @@ async function handlePrediction(body: any) {
 }
 
 // ===== DATA FETCHERS =====
-async function fetchDriverStandings(): Promise<any[]> {
+export async function fetchDriverStandings(): Promise<any[]> {
   const res = await fetch('https://api.jolpi.ca/ergast/f1/current/driverStandings.json');
   const data = await res.json() as any;
   return data.MRData.StandingsTable.StandingsLists[0]?.DriverStandings || [];
 }
 
-async function fetchRaceCalendar(): Promise<any[]> {
+export async function fetchRaceCalendar(): Promise<any[]> {
   const res = await fetch('https://api.jolpi.ca/ergast/f1/current.json');
   const data = await res.json() as any;
   return data.MRData.RaceTable.Races || [];
 }
 
-function findNextRace(races: any[]): any {
+export function findNextRace(races: any[]): any {
   const now = new Date();
   const upcoming = races.find((r: any) => new Date(r.date) > now);
   return upcoming || races[races.length - 1];
 }
 
 // ===== PROMPT BUILDERS =====
-function buildOverviewPrompt(standings: any[], nextRace: any, circuit: string): string {
+export function buildOverviewPrompt(standings: any[], nextRace: any, circuit: string): string {
   const standingsText = standings
     .slice(0, 10)
     .map((s: any) =>
@@ -116,7 +116,7 @@ Respond ONLY in this JSON format, no other text:
 }`;
 }
 
-function buildPredictionPrompt(request: any, races: any[], standings: any[]): string {
+export function buildPredictionPrompt(request: any, races: any[], standings: any[]): string {
   const standingsText = standings
     .slice(0, 10)
     .map((s: any) =>
@@ -157,7 +157,7 @@ Respond ONLY in this JSON format, no other text:
 }
 
 // ===== BEDROCK =====
-async function callBedrock(prompt: string): Promise<any> {
+export async function callBedrock(prompt: string): Promise<any> {
   const modelId = process.env.BEDROCK_MODEL_ID || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 
   const command = new InvokeModelCommand({
@@ -181,7 +181,7 @@ async function callBedrock(prompt: string): Promise<any> {
 }
 
 // ===== HELPERS =====
-function response(statusCode: number, body: any) {
+export function response(statusCode: number, body: any) {
   return {
     statusCode,
     headers: {
