@@ -54,13 +54,13 @@ export async function handlePrediction(body: any) {
 // ===== DATA FETCHERS =====
 export async function fetchDriverStandings(): Promise<any[]> {
   const res = await fetch('https://api.jolpi.ca/ergast/f1/current/driverStandings.json');
-  const data = await res.json();
+  const data = await res.json() as any;
   return data.MRData.StandingsTable.StandingsLists[0]?.DriverStandings || [];
 }
 
 export async function fetchRaceCalendar(): Promise<any[]> {
   const res = await fetch('https://api.jolpi.ca/ergast/f1/current.json');
-  const data = await res.json();
+  const data = await res.json() as any;
   return data.MRData.RaceTable.Races || [];
 }
 
