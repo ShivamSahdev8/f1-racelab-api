@@ -236,7 +236,21 @@ Strategy: ${request.strategy}
 
 Respond ONLY in this JSON format, no other text:
 {
-  ... (keep your existing JSON schema unchanged)
+  {
+  "winChance": <number 0-100>,
+  "podiumChance": <number 0-100>,
+  "expectedPosition": <number 1-20>,
+  "expectedPoints": <number>,
+  "insight": "<2-3 sentence explanation of prediction>",
+  "riskFactor": "<LOW|MEDIUM|HIGH>",
+  "optimalSetup": {
+    "tyres": "<SOFT|MEDIUM|HARD|INTERMEDIATE|WET>",
+    "strategy": "<1-STOP|2-STOP|3-STOP>",
+    "downforce": "<LOW|MEDIUM|HIGH>",
+    "winChance": <number 0-100>,
+    "explanation": "<1 sentence why this is better>"
+  },
+  "funFact": "<interesting F1 fact about this driver or circuit>"
 }`;
 }
 // ===== BEDROCK =====
