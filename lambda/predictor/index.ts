@@ -1,3 +1,4 @@
+import { createHandler, DynamoPredictionStore, identify } from './access';
 import {
   BedrockRuntimeClient,
   InvokeModelCommand,
@@ -5,24 +6,14 @@ import {
 
 const client = new BedrockRuntimeClient({
   region: process.env.BEDROCK_REGION || 'us-east-2',
+  maxAttempts: 1, // One reserved generation must cause at most one inference attempt.
 });
 
-export const handler = async (event: any) => {
-  try {
-    const body = JSON.parse(event.body);
-    const path = event.resource || event.path || '';
-
-    if (body.type === 'overview') {
-      return await handleOverview(body);
-    } else {
-      return await handlePrediction(body);
-    }
-
-  } catch (error: any) {
-    console.error('Error:', error);
-    return response(500, { error: error.message });
-  }
-};
+export const handler = createHandler({
+  store: new DynamoPredictionStore(),
+  identify,
+  generate: request => 'type' in request ? handleOverview(request) : handlePrediction(request),
+});
 
 // ===== OVERVIEW — Top contenders for next race =====
 export async function handleOverview(body: any) {
@@ -66,13 +57,15 @@ export async function handlePrediction(body: any) {
 
 // ===== DATA FETCHERS =====
 export async function fetchDriverStandings(): Promise<any[]> {
-  const res = await fetch('https://api.jolpi.ca/ergast/f1/current/driverStandings.json');
+  const res = await fetch('https://api.jolpi.ca/ergast/f1/current/driverStandings.json', { signal: AbortSignal.timeout(5000) });
+  if (!res.ok) throw new Error('Standings unavailable');
   const data = await res.json() as any;
   return data.MRData.StandingsTable.StandingsLists[0]?.DriverStandings || [];
 }
 
 export async function fetchRaceCalendar(): Promise<any[]> {
-  const res = await fetch('https://api.jolpi.ca/ergast/f1/current.json');
+  const res = await fetch('https://api.jolpi.ca/ergast/f1/current.json', { signal: AbortSignal.timeout(5000) });
+  if (!res.ok) throw new Error('Race calendar unavailable');
   const data = await res.json() as any;
   return data.MRData.RaceTable.Races || [];
 }
@@ -86,7 +79,7 @@ export async function fetchCircuitHistory(circuitId: string, years: number = 3):
   for (let i = 1; i <= years; i++) {
     const season = currentYear - i;
     requests.push(
-      fetch(`https://api.jolpi.ca/ergast/f1/${season}/circuits/${circuitId}/results.json`)
+      fetch(`https://api.jolpi.ca/ergast/f1/${season}/circuits/${circuitId}/results.json`, { signal: AbortSignal.timeout(5000) })
         .then((res) => res.json() as any)
         .then((data) => {
           const race = data.MRData.RaceTable.Races[0];
@@ -128,7 +121,7 @@ export function buildOverviewPrompt(standings: any[], nextRace: any, circuit: st
 
   return `You are an F1 race prediction AI analyst. Predict the top 5 finishers for the upcoming race.
 
-CURRENT 2026 SEASON STANDINGS:
+CURRENT SEASON STANDINGS:
 ${standingsText}
 
 UPCOMING RACE: ${raceName}
@@ -236,7 +229,6 @@ Strategy: ${request.strategy}
 
 Respond ONLY in this JSON format, no other text:
 {
-  {
   "winChance": <number 0-100>,
   "podiumChance": <number 0-100>,
   "expectedPosition": <number 1-20>,
@@ -284,6 +276,7 @@ export function response(statusCode: number, body: any) {
     headers: {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-store',
     },
     body: JSON.stringify(body),
   };
