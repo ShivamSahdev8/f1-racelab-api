@@ -58,20 +58,38 @@ bin/f1-racelab-api.ts        # CDK app entry point
 
 ---
 
+## Prediction access and cost controls
+
+`POST /predict` is public only for a limited anonymous trial. The Lambda enforces access before invoking Bedrock:
+
+- **Guests:** one request attempt per UUIDv4 `guestId`, persisted indefinitely in DynamoDB; a separate hashed source-IP bucket allows at most 3 guest attempts per UTC day. The IP comes from API Gateway, never a caller-supplied forwarding header. A person can change browsers or IPs, so the global allowance is the final Bedrock safeguard.
+- **Members:** send a Cognito **ID token** as `Authorization: Bearer <token>`. Signature, expiry, issuer, token use, and app-client audience are verified using `aws-jwt-verify`. A verified personal email is required. The previous shared demo account is rejected even if its token is valid. Invalid tokens never fall back to guest access.
+- **Allowances:** 5 requests per member per UTC day and 100 new model invocations site-wide per UTC day. A DynamoDB transaction reserves all applicable counters together. Errors, uncertain responses, and timeouts retain reservations; there are no automatic Bedrock SDK retries. A quota-store failure fails closed.
+- **Caching:** normalized setups and shared overviews are cached for 15 minutes and partitioned by UTC day, model, and prompt version. Cache hits still require a user allowance, but consume no model allowance. Conditional generation locks prevent simultaneous cache misses from invoking the model repeatedly. A busy request returns `429` without consuming its server allowance; the browser conservatively retains its attempted trial.
+- **Overviews:** require member authentication and count toward the same member/global limits as personalized predictions.
+- **Infrastructure:** a retained DynamoDB table holds allowances, expiring cache/lock records, and daily counters. API Gateway also targets 5 requests/second with a burst of 10; this throttle is best effort, while the transactional generation counter is the inference limit.
+
+The defaults and existing Cognito pool/app IDs are in `lib/predictor-stack.ts`. Set `GLOBAL_DAILY_LIMIT` to `0` to stop new model generations. Cached results can still be served within member/guest allowances. Daily counters are keyed by UTC date rather than relying on eventual DynamoDB TTL deletion. This limits inference attempts, not all AWS charges; API Gateway, Lambda, and DynamoDB still incur usage costs. Keep AWS billing alerts enabled.
+
+The frontend must use the updated guest ID and ID-token contract. Deploy this API together with `f1-racelab-ui`'s `feature/ui-updates` changes. Revoke/disable the previously published shared guest credentials in Cognito as operational cleanup; this endpoint already denies that account.
+
+Errors return `{ "code": "...", "error": "..." }`: `INVALID_REQUEST` (400), `SIGN_IN_REQUIRED` (401), `GUEST_LIMIT_REACHED` (403), `DAILY_LIMIT_REACHED`, `GLOBAL_LIMIT_REACHED`, or `RATE_LIMITED` (429), and `UNAVAILABLE` (503). Clients must not automatically retry generation requests.
+
 ## API
 
 ### `POST /predict`
 
-**Race overview** — top contenders for the next Grand Prix:
+**Race overview** (member ID token required) — top contenders for the next Grand Prix:
 
 ```json
 { "type": "overview" }
 ```
 
-**What-if prediction** — single driver + setup:
+**What-if prediction** — single driver + setup. Anonymous requests also include a stable UUIDv4 `guestId`; members provide the ID-token header instead:
 
 ```json
 {
+  "guestId": "06d939be-4eac-498a-8d7d-f3ec690b566d",
   "driver": "Charles Leclerc",
   "circuit": "Monaco",
   "tyres": "SOFT",
@@ -149,12 +167,22 @@ cdk diff                        # show what would change
 cdk destroy --all               # tear everything down
 ```
 
-### Test the deployed endpoint
+### Test locally without incurring model charges
+
+```bash
+npm run build
+npm test -- --runInBand
+npx cdk synth
+```
+
+Tests mock inference and storage; they do not call the live prediction API.
+
+### Manually test the deployed endpoint (consumes a trial)
 
 ```bash
 curl -X POST <api-url>/predict \
   -H "Content-Type: application/json" \
-  -d '{"driver":"Charles Leclerc","circuit":"Monaco","tyres":"SOFT","weather":"DRY","downforce":"HIGH","strategy":"1-STOP"}'
+  -d '{"guestId":"06d939be-4eac-498a-8d7d-f3ec690b566d","driver":"Charles Leclerc","circuit":"Monaco","tyres":"SOFT","weather":"DRY","downforce":"HIGH","strategy":"1-STOP"}'
 ```
 
 ---
@@ -192,7 +220,7 @@ f1-racelab-api/
 ## Implementation Notes
 
 - The Lambda uses CDK's **`NodejsFunction`**, which compiles and bundles the TypeScript handler with esbuild automatically — no manual build step or committed JS.
-- `@aws-sdk/*` is marked as an external module since the SDK is already present in the Lambda runtime, keeping the bundle small.
+- Runtime dependencies, including AWS SDK clients and JWT verification, are bundled from the lockfile so deployment does not depend on the runtime's SDK version.
 - Bedrock requires an **inference-profile model ID** (the `us.` prefix) for on-demand throughput; legacy direct model IDs are not supported.
 - The IAM role includes AWS Marketplace permissions (`aws-marketplace:ViewSubscriptions`, `Subscribe`) required for first-time and ongoing access to Anthropic models.
 

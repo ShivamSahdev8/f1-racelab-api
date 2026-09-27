@@ -10,6 +10,7 @@ export class SharedStack extends cdk.Stack {
 
     this.api = new apigateway.RestApi(this, 'F1RacelabApi', {
       restApiName: 'F1 RaceLab API',
+      deployOptions: { throttlingRateLimit: 5, throttlingBurstLimit: 10 },
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,
         allowMethods: apigateway.Cors.ALL_METHODS,
