@@ -1,7 +1,6 @@
 import * as cdk from "aws-cdk-lib";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
-import * as iam from "aws-cdk-lib/aws-iam";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as path from "path";
@@ -37,7 +36,7 @@ export class PredictorStack extends cdk.Stack {
         COGNITO_CLIENT_ID: "6ahposh9tdsm97rv721i7i41v",
         MEMBER_DAILY_LIMIT: "5",
         GUEST_IP_DAILY_LIMIT: "3",
-        GLOBAL_DAILY_LIMIT: "100",
+        GLOBAL_DAILY_LIMIT: "0",
       },
       bundling: {
         minify: true,
@@ -47,33 +46,6 @@ export class PredictorStack extends cdk.Stack {
     });
 
     predictions.grantReadWriteData(predictorFn);
-
-    // Grant Bedrock access
-    predictorFn.addToRolePolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: ["bedrock:InvokeModel"],
-        resources: ["*"],
-      }),
-    );
-
-    // Grant Marketplace permissions (required for Anthropic models)
-    predictorFn.addToRolePolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: [
-          "aws-marketplace:ViewSubscriptions",
-          "aws-marketplace:Subscribe",
-          "aws-marketplace:Unsubscribe",
-          "bedrock:InvokeModel",
-          "bedrock:GetFoundationModel",
-          "bedrock:ListFoundationModels",
-          "bedrock:GetInferenceProfile",
-          "bedrock:ListInferenceProfiles",
-        ],
-        resources: ["*"],
-      }),
-    );
 
     // Connect to API Gateway
     const predictResource = props.api.root.addResource("predict");
