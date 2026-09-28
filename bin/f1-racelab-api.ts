@@ -1,20 +1,5 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
-import { SharedStack } from '../lib/shared-stack';
-import { PredictorStack } from '../lib/predictor-stack';
-
-const app = new cdk.App();
-
-const env = {
-  account: process.env.CDK_DEFAULT_ACCOUNT,
-  region: 'us-east-2'
-};
-
-// Shared resources (API Gateway)
-const sharedStack = new SharedStack(app, 'SharedStack', { env });
-
-// Predictor Lambda + Bedrock
-new PredictorStack(app, 'PredictorStack', {
-  env,
-  api: sharedStack.api
-});
+// The UI now computes estimates in the browser. Keep this CDK app empty so
+// validation or an accidental deploy cannot recreate the retired API.
+new cdk.App();
